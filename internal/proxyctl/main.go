@@ -15,6 +15,12 @@ const (
 
 var ErrUnsupportedPlatform = errors.New("proxyctl: unsupported platform")
 
+type Controller interface {
+	SetProxy(ctx context.Context, service, host string, port int) error
+	UnsetProxy(ctx context.Context, service string) error
+	ListProxies(ctx context.Context, service string) (ServiceStatus, error)
+}
+
 type ProxyConfig struct {
 	Enabled       bool
 	Host          string
@@ -28,57 +34,12 @@ type ServiceStatus struct {
 	HTTPS ProxyConfig
 }
 
-func ListServices(ctx context.Context) ([]string, error) {
+func New() (Controller, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		return listDarwinServices(ctx)
+		return &macOSController{}, nil
 	default:
 		return nil, unsupportedPlatformError()
-	}
-}
-
-func Set(ctx context.Context, service, host string, port int) error {
-	if service == "" {
-		return errors.New("proxyctl: service is required")
-	}
-	if host == "" {
-		return errors.New("proxyctl: host is required")
-	}
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("proxyctl: invalid port %d", port)
-	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		return setDarwinProxy(ctx, service, host, port)
-	default:
-		return unsupportedPlatformError()
-	}
-}
-
-func Unset(ctx context.Context, service string) error {
-	if service == "" {
-		return errors.New("proxyctl: service is required")
-	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		return unsetDarwinProxy(ctx, service)
-	default:
-		return unsupportedPlatformError()
-	}
-}
-
-func Status(ctx context.Context, service string) (ServiceStatus, error) {
-	if service == "" {
-		return ServiceStatus{}, errors.New("proxyctl: service is required")
-	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		return darwinStatus(ctx, service)
-	default:
-		return ServiceStatus{}, unsupportedPlatformError()
 	}
 }
 

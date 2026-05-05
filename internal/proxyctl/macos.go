@@ -2,32 +2,26 @@ package proxyctl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 )
 
-func listDarwinServices(ctx context.Context) ([]string, error) {
-	output, err := runNetworksetup(ctx, "-listallnetworkservices")
-	if err != nil {
-		return nil, err
+type macOSController struct{}
+
+func (controller *macOSController) SetProxy(ctx context.Context, service, host string, port int) error {
+	if service == "" {
+		return errors.New("proxyctl: service is required")
+	}
+	if host == "" {
+		return errors.New("proxyctl: host is required")
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("proxyctl: invalid port %d", port)
 	}
 
-	var services []string
-	for line := range strings.SplitSeq(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "An asterisk") {
-			continue
-		}
-
-		services = append(services, strings.TrimPrefix(line, "* "))
-	}
-
-	return services, nil
-}
-
-func setDarwinProxy(ctx context.Context, service, host string, port int) error {
 	portString := strconv.Itoa(port)
 	commands := [][]string{
 		{"-setwebproxy", service, host, portString},
@@ -37,7 +31,7 @@ func setDarwinProxy(ctx context.Context, service, host string, port int) error {
 	}
 
 	for _, args := range commands {
-		if _, err := runNetworksetup(ctx, args...); err != nil {
+		if _, err := controller.runNetworksetup(ctx, args...); err != nil {
 			return err
 		}
 	}
@@ -45,14 +39,18 @@ func setDarwinProxy(ctx context.Context, service, host string, port int) error {
 	return nil
 }
 
-func unsetDarwinProxy(ctx context.Context, service string) error {
+func (controller *macOSController) UnsetProxy(ctx context.Context, service string) error {
+	if service == "" {
+		return errors.New("proxyctl: service is required")
+	}
+
 	commands := [][]string{
 		{"-setwebproxystate", service, "off"},
 		{"-setsecurewebproxystate", service, "off"},
 	}
 
 	for _, args := range commands {
-		if _, err := runNetworksetup(ctx, args...); err != nil {
+		if _, err := controller.runNetworksetup(ctx, args...); err != nil {
 			return err
 		}
 	}
@@ -60,13 +58,17 @@ func unsetDarwinProxy(ctx context.Context, service string) error {
 	return nil
 }
 
-func darwinStatus(ctx context.Context, service string) (ServiceStatus, error) {
-	httpOutput, err := runNetworksetup(ctx, "-getwebproxy", service)
+func (controller *macOSController) ListProxies(ctx context.Context, service string) (ServiceStatus, error) {
+	if service == "" {
+		return ServiceStatus{}, errors.New("proxyctl: service is required")
+	}
+
+	httpOutput, err := controller.runNetworksetup(ctx, "-getwebproxy", service)
 	if err != nil {
 		return ServiceStatus{}, err
 	}
 
-	httpsOutput, err := runNetworksetup(ctx, "-getsecurewebproxy", service)
+	httpsOutput, err := controller.runNetworksetup(ctx, "-getsecurewebproxy", service)
 	if err != nil {
 		return ServiceStatus{}, err
 	}
@@ -87,7 +89,26 @@ func darwinStatus(ctx context.Context, service string) (ServiceStatus, error) {
 	}, nil
 }
 
-func runNetworksetup(ctx context.Context, args ...string) (string, error) {
+func (controller *macOSController) listServices(ctx context.Context) ([]string, error) {
+	output, err := controller.runNetworksetup(ctx, "-listallnetworkservices")
+	if err != nil {
+		return nil, err
+	}
+
+	var services []string
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "An asterisk") {
+			continue
+		}
+
+		services = append(services, strings.TrimPrefix(line, "* "))
+	}
+
+	return services, nil
+}
+
+func (*macOSController) runNetworksetup(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "networksetup", args...)
 	output, err := cmd.CombinedOutput()
 	if err == nil {

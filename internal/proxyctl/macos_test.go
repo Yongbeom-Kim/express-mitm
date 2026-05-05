@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestSetThenStatusDarwinProxy(t *testing.T) {
+func TestSetThenListProxiesDarwinProxy(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS networksetup integration test")
 	}
@@ -19,16 +19,26 @@ func TestSetThenStatusDarwinProxy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	service := testNetworkService(t, ctx)
-	original, err := Status(ctx, service)
+	controller, err := New()
 	if err != nil {
-		t.Fatalf("Status(%q) before Set: %v", service, err)
+		t.Fatalf("New(): %v", err)
+	}
+
+	macController, ok := controller.(*macOSController)
+	if !ok {
+		t.Fatalf("New() returned %T, want *macOSController", controller)
+	}
+
+	service := testNetworkService(t, ctx, macController)
+	original, err := controller.ListProxies(ctx, service)
+	if err != nil {
+		t.Fatalf("ListProxies(%q) before SetProxy: %v", service, err)
 	}
 	t.Cleanup(func() {
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := restoreDarwinProxyStatus(restoreCtx, service, original); err != nil {
+		if err := restoreDarwinProxyStatus(restoreCtx, macController, service, original); err != nil {
 			t.Errorf("restore %q proxy status: %v", service, err)
 		}
 	})
@@ -43,32 +53,44 @@ func TestSetThenStatusDarwinProxy(t *testing.T) {
 	host := "127.0.0.1"
 	port := addr.Port
 
-	if err := Set(ctx, service, host, port); err != nil {
-		t.Fatalf("Set(%q, %q, %d): %v", service, host, port, err)
+	if err := controller.SetProxy(ctx, service, host, port); err != nil {
+		t.Fatalf("SetProxy(%q, %q, %d): %v", service, host, port, err)
 	}
 
-	status, err := Status(ctx, service)
+	status, err := controller.ListProxies(ctx, service)
 	if err != nil {
-		t.Fatalf("Status(%q) after Set: %v", service, err)
+		t.Fatalf("ListProxies(%q) after SetProxy: %v", service, err)
 	}
 
 	assertProxyConfig(t, "HTTP", status.HTTP, host, port)
 	assertProxyConfig(t, "HTTPS", status.HTTPS, host, port)
+
+	if err := controller.UnsetProxy(ctx, service); err != nil {
+		t.Fatalf("UnsetProxy(%q): %v", service, err)
+	}
+
+	status, err = controller.ListProxies(ctx, service)
+	if err != nil {
+		t.Fatalf("ListProxies(%q) after UnsetProxy: %v", service, err)
+	}
+
+	assertProxyDisabled(t, "HTTP", status.HTTP)
+	assertProxyDisabled(t, "HTTPS", status.HTTPS)
 }
 
-func testNetworkService(t *testing.T, ctx context.Context) string {
+func testNetworkService(t *testing.T, ctx context.Context, controller *macOSController) string {
 	t.Helper()
 
 	if service := os.Getenv("PROXYCTL_TEST_SERVICE"); service != "" {
 		return service
 	}
 
-	services, err := ListServices(ctx)
+	services, err := controller.listServices(ctx)
 	if err != nil {
-		t.Fatalf("ListServices(): %v", err)
+		t.Fatalf("listServices(): %v", err)
 	}
 	if len(services) == 0 {
-		t.Fatal("ListServices() returned no network services")
+		t.Fatal("listServices() returned no network services")
 	}
 
 	for _, service := range services {
@@ -94,19 +116,27 @@ func assertProxyConfig(t *testing.T, name string, config ProxyConfig, host strin
 	}
 }
 
-func restoreDarwinProxyStatus(ctx context.Context, service string, status ServiceStatus) error {
-	if err := restoreDarwinProxyConfig(ctx, "-setwebproxy", "-setwebproxystate", service, status.HTTP); err != nil {
+func assertProxyDisabled(t *testing.T, name string, config ProxyConfig) {
+	t.Helper()
+
+	if config.Enabled {
+		t.Fatalf("%s proxy enabled = true, want false", name)
+	}
+}
+
+func restoreDarwinProxyStatus(ctx context.Context, controller *macOSController, service string, status ServiceStatus) error {
+	if err := restoreDarwinProxyConfig(ctx, controller, "-setwebproxy", "-setwebproxystate", service, status.HTTP); err != nil {
 		return fmt.Errorf("HTTP: %w", err)
 	}
-	if err := restoreDarwinProxyConfig(ctx, "-setsecurewebproxy", "-setsecurewebproxystate", service, status.HTTPS); err != nil {
+	if err := restoreDarwinProxyConfig(ctx, controller, "-setsecurewebproxy", "-setsecurewebproxystate", service, status.HTTPS); err != nil {
 		return fmt.Errorf("HTTPS: %w", err)
 	}
 	return nil
 }
 
-func restoreDarwinProxyConfig(ctx context.Context, configCommand, stateCommand, service string, config ProxyConfig) error {
+func restoreDarwinProxyConfig(ctx context.Context, controller *macOSController, configCommand, stateCommand, service string, config ProxyConfig) error {
 	if config.Host != "" && config.Port > 0 {
-		if _, err := runNetworksetup(ctx, configCommand, service, config.Host, strconv.Itoa(config.Port)); err != nil {
+		if _, err := controller.runNetworksetup(ctx, configCommand, service, config.Host, strconv.Itoa(config.Port)); err != nil {
 			return err
 		}
 	}
@@ -115,6 +145,6 @@ func restoreDarwinProxyConfig(ctx context.Context, configCommand, stateCommand, 
 	if config.Enabled {
 		state = "on"
 	}
-	_, err := runNetworksetup(ctx, stateCommand, service, state)
+	_, err := controller.runNetworksetup(ctx, stateCommand, service, state)
 	return err
 }
