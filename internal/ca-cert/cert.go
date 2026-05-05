@@ -10,56 +10,25 @@ import (
 	"log/slog"
 	"math/big"
 	"os"
-	"path"
 	"time"
 
 	"github.com/Yongbeom-Kim/express-mitm/internal/fs"
 )
 
-func GenerateCaCert() (certOutPath string, keyOutPath string, err error) {
-	certOutPath = path.Join(fs.ApplicationHomeDir(), "cert", "ca.crt")
-	keyOutPath = path.Join(fs.ApplicationHomeDir(), "cert", "ca.key")
+func (authority *fileAuthority) GenerateCaCert() error {
+	certOutPath := authority.certPath
+	keyOutPath := authority.keyPath
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
-
-	key, err := generateRsaKey()
-	if err != nil {
-		return certOutPath, keyOutPath, err
-	}
-
-	derBytes, err := createCaCertificate(key)
-	if err != nil {
-		return certOutPath, keyOutPath, err
-	}
-
-	if err := writeCaPemFile(derBytes, certOutPath); err != nil {
-		slog.Error("Write CA cert file failed", "path", certOutPath, "error", err)
-		return certOutPath, keyOutPath, err
-	}
-
-	if err := writeCaKeyFile(key, keyOutPath); err != nil {
-		slog.Error("Write CA key file failed", "path", keyOutPath, "error", err)
-		return certOutPath, keyOutPath, err
-	}
-
-	slog.Info("Generated CA", "cert", certOutPath, "key", keyOutPath)
-
-	return
-}
-
-func generateRsaKey() (key *rsa.PrivateKey, err error) {
-	key, err = rsa.GenerateKey(rand.Reader, 4096)
+	key, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		slog.Error("Generate RSA key failed", "error", err)
+		return err
 	}
-	return
-}
 
-func createCaCertificate(key *rsa.PrivateKey) (derBytes []byte, err error) {
 	if key == nil {
 		err = errors.New("key is nil")
 		slog.Error("Create CA certificate failed", "error", err)
-		return nil, err
+		return err
 	}
 
 	template := &x509.Certificate{
@@ -75,48 +44,38 @@ func createCaCertificate(key *rsa.PrivateKey) (derBytes []byte, err error) {
 		BasicConstraintsValid: true,
 	}
 
-	derBytes, err = x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
 		slog.Error("Create CA certificate failed", "error", err)
+		return err
 	}
 
-	return
-}
-
-func writeCaPemFile(derBytes []byte, pemFilePath string) error {
-	certOut, err := fs.CreateFile(pemFilePath, 0o644, false)
+	certOut, err := fs.CreateFile(certOutPath, 0o644, false)
 	if err != nil {
-		slog.Error("Create CA cert file failed", "path", pemFilePath, "error", err)
+		slog.Error("Create CA cert file failed", "path", certOutPath, "error", err)
 		return err
 	}
 
 	defer func() {
 		if cerr := certOut.Close(); cerr != nil {
-			slog.Error("Close CA cert file failed", "path", pemFilePath, "error", cerr)
+			slog.Error("Close CA cert file failed", "path", certOutPath, "error", cerr)
 		}
 	}()
 
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
-		slog.Error("Write CA cert PEM failed", "path", pemFilePath, "error", err)
+		slog.Error("Write CA cert PEM failed", "path", certOutPath, "error", err)
 		return err
 	}
-	return nil
-}
 
-func writeCaKeyFile(key *rsa.PrivateKey, caFilePath string) error {
-	if key == nil {
-		return errors.New("key is nil")
-	}
-
-	keyOut, err := fs.CreateFile(caFilePath, 0o600, true)
+	keyOut, err := fs.CreateFile(keyOutPath, 0o600, true)
 	if err != nil {
-		slog.Error("Create CA key file failed", "path", caFilePath, "error", err)
+		slog.Error("Create CA key file failed", "path", keyOutPath, "error", err)
 		return err
 	}
 
 	defer func() {
 		if cerr := keyOut.Close(); cerr != nil {
-			slog.Error("Close CA key file failed", "path", caFilePath, "error", cerr)
+			slog.Error("Close CA key file failed", "path", keyOutPath, "error", cerr)
 		}
 	}()
 
@@ -124,8 +83,31 @@ func writeCaKeyFile(key *rsa.PrivateKey, caFilePath string) error {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	}); err != nil {
-		slog.Error("Write CA key PEM failed", "path", caFilePath, "error", err)
+		slog.Error("Write CA key PEM failed", "path", keyOutPath, "error", err)
 		return err
 	}
+
+	slog.Info("Generated CA", "cert", certOutPath, "key", keyOutPath)
+
 	return nil
+}
+
+func (authority *fileAuthority) GetCaCert() ([]byte, error) {
+	cert, err := os.ReadFile(authority.certPath)
+	if err != nil {
+		slog.Error("Read CA cert file failed", "path", authority.certPath, "error", err)
+		return nil, err
+	}
+
+	return cert, nil
+}
+
+func (authority *fileAuthority) GetCaKey() ([]byte, error) {
+	key, err := os.ReadFile(authority.keyPath)
+	if err != nil {
+		slog.Error("Read CA key file failed", "path", authority.keyPath, "error", err)
+		return nil, err
+	}
+
+	return key, nil
 }

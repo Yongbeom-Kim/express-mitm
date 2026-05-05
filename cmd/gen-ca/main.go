@@ -7,7 +7,8 @@ import (
 )
 
 func main() {
-	if _, _, err := cacert.GenerateCaCert(); err != nil {
+	authority := cacert.New()
+	if err := authority.GenerateCaCert(); err != nil {
 		log.Fatal(err)
 	}
 }
