@@ -19,6 +19,10 @@ func (authority *fileAuthority) GenerateCaCert() error {
 	certOutPath := authority.certPath
 	keyOutPath := authority.keyPath
 
+	if fileExists(certOutPath) && fileExists(keyOutPath) {
+		return nil
+	}
+
 	key, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		slog.Error("Generate RSA key failed", "error", err)
@@ -110,4 +114,9 @@ func (authority *fileAuthority) GetCaKey() ([]byte, error) {
 	}
 
 	return key, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
