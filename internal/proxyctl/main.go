@@ -10,7 +10,7 @@ import (
 const (
 	DefaultService = "Wi-Fi"
 	DefaultHost    = "127.0.0.1"
-	DefaultPort    = 8080
+	DefaultPort    = 16326
 )
 
 var ErrUnsupportedPlatform = errors.New("proxyctl: unsupported platform")

@@ -24,17 +24,7 @@ func New(minter certmint.Minter) *ProxyServer {
 }
 
 func (p *ProxyServer) Listen(addr string) error {
-	config := &tls.Config{
-		GetCertificate: func(tlsInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert, err := p.minter.Mint(tlsInfo.ServerName)
-			if err != nil {
-				slog.Error("[ProxyServer] Error in minting leaf certificate", "server name", tlsInfo.ServerName)
-			}
-			return cert, err
-		},
-	}
-
-	listener, err := tls.Listen("tcp", addr, config)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("[ProxyServer] Error in creating TLS Listener", "error", err.Error())
 		return err
@@ -54,23 +44,80 @@ func (p *ProxyServer) Listen(addr string) error {
 
 func (p *ProxyServer) handleConn(conn net.Conn) {
 	defer conn.Close()
-
-	tlsConn, ok := conn.(*tls.Conn)
-
-	if !ok {
-		slog.Error("[ProxyServer] Connection is not a TLS connection")
+	err := p.handleInitialConnect(conn)
+	if err != nil {
+		slog.Error("[ProxyServer] Error in handling initial CONNECT", "error", err.Error())
 		return
 	}
 
-	serverName := tlsConn.ConnectionState().ServerName
+	tlsConn, err := p.handleTlsHandshake(conn)
+	if err != nil {
+		slog.Error("[ProxyServer] TLS handshake failed", "error", err.Error())
+		return
+	}
 
-	reader := bufio.NewReader(conn)
+	p.forwardHttp(tlsConn)
+
+}
+
+func (p *ProxyServer) handleInitialConnect(conn net.Conn) error {
+	req, err := http.ReadRequest(bufio.NewReader(conn))
+
+	if err != nil {
+		slog.Error("[ProxyServer] failed to unpack (expected) CONNECT request", "error", err)
+		return err
+	}
+
+	if req.Method != http.MethodConnect {
+		slog.Error("[ProxyServer] non-CONNECT method not supported", "method", req.Method)
+		return NewUnexpectedHttpMethodErr(http.MethodConnect, req.Method)
+	}
+
+	res := &http.Response{
+		StatusCode: 200,
+		Status:     "200 Connection Established",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+	}
+
+	res.Write(conn)
+	return nil
+}
+
+func (p *ProxyServer) handleTlsHandshake(conn net.Conn) (*tls.Conn, error) {
+	// TODO: dependency inject
+	config := &tls.Config{
+		GetCertificate: func(tlsInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := p.minter.Mint(tlsInfo.ServerName)
+			if err != nil {
+				slog.Error("[ProxyServer] Error in minting leaf certificate", "server name", tlsInfo.ServerName)
+			}
+			return cert, err
+		},
+	}
+	tlsConn := tls.Server(conn, config)
+	err := tlsConn.Handshake()
+	if err != nil {
+		slog.Error("[ProxyServer] TLS handshake failed", "error", err.Error())
+		return nil, err
+	}
+
+	return tlsConn, nil
+
+}
+
+func (p *ProxyServer) forwardHttp(tlsConn *tls.Conn) {
+
+	reader := bufio.NewReader(tlsConn)
 	req, err := http.ReadRequest(reader)
 	if err != nil {
 		slog.Error("[ProxyServer] Error in reading request", "error", err.Error())
 		return
 	}
 	defer req.Body.Close()
+	serverName := tlsConn.ConnectionState().ServerName
 
 	res, err := p.handleHTTP(serverName, req)
 	if err != nil {
@@ -84,7 +131,7 @@ func (p *ProxyServer) handleConn(conn net.Conn) {
 			Body:       http.NoBody,
 		}
 	}
-	res.Write(conn)
+	res.Write(tlsConn)
 }
 
 func (p *ProxyServer) handleHTTP(serverName string, req *http.Request) (*http.Response, error) {
