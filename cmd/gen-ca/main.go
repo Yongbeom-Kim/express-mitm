@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	cacert "github.com/Yongbeom-Kim/express-mitm/internal/ca-cert"
+	cacert "github.com/Yongbeom-Kim/express-mitm/internal/mitmserver/ca-cert"
 )
 
 func main() {

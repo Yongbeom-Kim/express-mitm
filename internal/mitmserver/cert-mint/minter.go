@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	cacert "github.com/Yongbeom-Kim/express-mitm/internal/ca-cert"
+	cacert "github.com/Yongbeom-Kim/express-mitm/internal/mitmserver/ca-cert"
 )
 
 var ErrAuthorityRequired = errors.New("certmint: authority is required")

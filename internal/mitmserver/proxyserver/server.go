@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
-	certmint "github.com/Yongbeom-Kim/express-mitm/internal/cert-mint"
+	certmint "github.com/Yongbeom-Kim/express-mitm/internal/mitmserver/cert-mint"
 )
 
 type Server interface {
