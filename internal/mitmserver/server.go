@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,15 +15,35 @@ import (
 )
 
 type MitmServer struct {
-	ProxyAddr   string
-	caAuthority cacert.Authority
+	ProxyAddr      string
+	caAuthority    cacert.Authority
+	httpReqHandler func(serverName string, req *http.Request) error
+	httpResHandler func(serverName string, res *http.Response) error
 }
 
-func NewMitmServer(proxyAddr string) *MitmServer {
-	return &MitmServer{
+type Option func(*MitmServer)
+
+func WithHTTPRequestHandler(handler func(serverName string, req *http.Request) error) Option {
+	return func(server *MitmServer) {
+		server.httpReqHandler = handler
+	}
+}
+
+func WithHTTPResponseHandler(handler func(serverName string, res *http.Response) error) Option {
+	return func(server *MitmServer) {
+		server.httpResHandler = handler
+	}
+}
+
+func NewMitmServer(proxyAddr string, opts ...Option) *MitmServer {
+	server := &MitmServer{
 		ProxyAddr:   proxyAddr,
 		caAuthority: cacert.New(),
 	}
+	for _, opt := range opts {
+		opt(server)
+	}
+	return server
 }
 
 func (server *MitmServer) Listen() error {
@@ -37,7 +58,7 @@ func (server *MitmServer) Listen() error {
 	if !portAvailable(server.ProxyAddr) {
 		return fmt.Errorf("port %s is already in use", server.ProxyAddr)
 	}
-	proxy := proxyserver.New(minter)
+	var proxy proxyserver.Server = proxyserver.New(minter, server.httpReqHandler, server.httpResHandler)
 
 	proxyServerErr := make(chan error, 1)
 	go func() {

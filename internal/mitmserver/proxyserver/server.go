@@ -13,14 +13,25 @@ import (
 )
 
 type Server interface {
+	Listen(addr string) error
 }
 
 type ProxyServer struct {
-	minter certmint.Minter
+	minter         certmint.Minter
+	httpReqHandler func(serverName string, req *http.Request) error
+	httpResHandler func(serverName string, res *http.Response) error
 }
 
-func New(minter certmint.Minter) *ProxyServer {
-	return &ProxyServer{minter: minter}
+func New(
+	minter certmint.Minter,
+	httpReqHandler func(serverName string, req *http.Request) error,
+	httpResHandler func(serverName string, res *http.Response) error,
+) Server {
+	return &ProxyServer{
+		minter:         minter,
+		httpReqHandler: httpReqHandler,
+		httpResHandler: httpResHandler,
+	}
 }
 
 func (p *ProxyServer) Listen(addr string) error {
@@ -148,7 +159,16 @@ func (p *ProxyServer) handleHTTP(serverName string, req *http.Request) (*http.Re
 		"path", req.URL.Path,
 		"raw query", req.URL.RawQuery,
 	)
+	if p.httpReqHandler != nil {
+		if err := p.httpReqHandler(serverName, req); err != nil {
+			return nil, err
+		}
+	}
 	resp, err := http.DefaultClient.Do(req)
-
+	if resp != nil && p.httpResHandler != nil {
+		if handlerErr := p.httpResHandler(serverName, resp); handlerErr != nil {
+			return nil, handlerErr
+		}
+	}
 	return resp, err
 }
