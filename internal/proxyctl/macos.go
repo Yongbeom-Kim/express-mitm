@@ -89,7 +89,7 @@ func (controller *macOSController) ListProxies(ctx context.Context, service stri
 	}, nil
 }
 
-func (controller *macOSController) listServices(ctx context.Context) ([]string, error) {
+func (controller *macOSController) ListServices(ctx context.Context) ([]string, error) {
 	output, err := controller.runNetworksetup(ctx, "-listallnetworkservices")
 	if err != nil {
 		return nil, err

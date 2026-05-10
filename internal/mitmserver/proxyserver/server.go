@@ -3,23 +3,30 @@ package proxyserver
 import (
 	"bufio"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 
 	certmint "github.com/Yongbeom-Kim/express-mitm/internal/mitmserver/cert-mint"
 )
 
 type Server interface {
-	Listen(addr string) error
+	Serve(listener net.Listener) error
+	Close() error
+	Ready() <-chan struct{}
 }
 
 type ProxyServer struct {
 	minter         certmint.Minter
 	httpReqHandler func(serverName string, req *http.Request) error
 	httpResHandler func(serverName string, res *http.Response) error
+	mu             sync.Mutex
+	listener       net.Listener
+	ready          chan struct{}
 }
 
 func New(
@@ -31,26 +38,69 @@ func New(
 		minter:         minter,
 		httpReqHandler: httpReqHandler,
 		httpResHandler: httpResHandler,
+		ready:          make(chan struct{}),
 	}
 }
 
-func (p *ProxyServer) Listen(addr string) error {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		slog.Error("[ProxyServer] Error in creating TLS Listener", "error", err.Error())
-		return err
+func (p *ProxyServer) Serve(listener net.Listener) error {
+	p.mu.Lock()
+	if p.listener != nil {
+		p.mu.Unlock()
+		_ = listener.Close()
+		return errors.New("proxy server is already serving")
 	}
-	defer listener.Close()
+	p.listener = listener
+	p.mu.Unlock()
+	close(p.ready)
+
+	defer func() {
+		p.mu.Lock()
+		if p.listener == listener {
+			p.listener = nil
+		}
+		p.mu.Unlock()
+		_ = listener.Close()
+	}()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Temporary() {
+				slog.Warn("[ProxyServer] Temporary accept error", "error", err.Error())
+				continue
+			}
+
 			slog.Error("[ProxyServer] Error in accepting connection", "error", err.Error())
-			continue
+			return err
 		}
 		go p.handleConn(conn)
 	}
+}
 
+func (p *ProxyServer) Close() error {
+	p.mu.Lock()
+	listener := p.listener
+	p.mu.Unlock()
+
+	if listener == nil {
+		return nil
+	}
+
+	err := listener.Close()
+	if errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+
+	return err
+}
+
+func (p *ProxyServer) Ready() <-chan struct{} {
+	return p.ready
 }
 
 func (p *ProxyServer) handleConn(conn net.Conn) {

@@ -85,12 +85,12 @@ func testNetworkService(t *testing.T, ctx context.Context, controller *macOSCont
 		return service
 	}
 
-	services, err := controller.listServices(ctx)
+	services, err := controller.ListServices(ctx)
 	if err != nil {
-		t.Fatalf("listServices(): %v", err)
+		t.Fatalf("ListServices(): %v", err)
 	}
 	if len(services) == 0 {
-		t.Fatal("listServices() returned no network services")
+		t.Fatal("ListServices() returned no network services")
 	}
 
 	for _, service := range services {
