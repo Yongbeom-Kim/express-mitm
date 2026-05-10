@@ -1,4 +1,4 @@
-package mitmserver
+package proxyserver
 
 import (
 	"bufio"

@@ -9,7 +9,7 @@ import (
 
 	cacert "github.com/Yongbeom-Kim/express-mitm/internal/ca-cert"
 	certmint "github.com/Yongbeom-Kim/express-mitm/internal/cert-mint"
-	"github.com/Yongbeom-Kim/express-mitm/internal/mitmserver"
+	"github.com/Yongbeom-Kim/express-mitm/internal/proxyserver"
 )
 
 func main() {
@@ -48,7 +48,7 @@ func main() {
 	// 	}
 	// }()
 
-	proxy := mitmserver.New(minter)
+	proxy := proxyserver.New(minter)
 
 	fatal := make(chan error, 1)
 	go func() {
